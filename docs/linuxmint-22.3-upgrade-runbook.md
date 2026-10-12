@@ -86,7 +86,8 @@ The local boot-chain assessment found a healthy UEFI/GRUB configuration, ample E
 ```bash
 # These should confirm UEFI mode, the EFI mount, and available EFI space.
 test -d /sys/firmware/efi && echo "UEFI booted" || echo "STOP: not booted in UEFI mode"
-findmnt /boot/efi
+findmnt -T /
+findmnt -T /boot/efi
 df -h /boot/efi
 
 # Confirm GRUB has the installed kernel and at least one older fallback entry.
@@ -97,7 +98,7 @@ nvidia-smi
 dkms status
 ```
 
-The EFI partition was 2% used and firmware pointed to Mint’s shim at inspection time. Do not change EFI/GRUB settings preemptively. Do not use force options, pin changes, or package removals to work around an update problem. If `/boot/efi` is not mounted, GRUB has no current and fallback entries, `nvidia-smi` fails, or DKMS has no NVIDIA module for the running kernel, stop and resolve that on Mint 21.3 before attempting the release upgrade.
+The EFI partition was 2% used and firmware pointed to Mint’s shim at inspection time. Do not change EFI/GRUB settings preemptively. From the installed desktop’s own terminal, confirm that both `/` and `/boot/efi` show `rw` in the `findmnt` options. The inspection shell used for this report showed them as `ro`, which may be imposed by its environment; this must be checked on the actual desktop before continuing. If either is still `ro`, stop and investigate filesystem/boot state; do not attempt to remount a possibly damaged root filesystem read-write. Also stop if `/boot/efi` is not mounted, GRUB has no current and fallback entries, `nvidia-smi` fails, or DKMS has no NVIDIA module for the running kernel. Do not use force options, pin changes, or package removals to work around update problems.
 
 ## Phase 4 — temporarily disable external APT sources
 
@@ -168,11 +169,14 @@ nvidia-smi
 dkms status
 inxi -A
 nmcli general status
-findmnt /boot/efi
+findmnt -T /
+findmnt -T /boot/efi
 grep -E "menuentry 'Linux Mint" /boot/grub/grub.cfg
 ```
 
 Test login, Cinnamon, Wi-Fi, Bluetooth, sound, suspend/resume, external displays, NVIDIA graphics, VPN, representative Docker workloads, and a QEMU/libvirt guest. Confirm that `dkms status` lists the NVIDIA module as installed for the newly booted kernel and that GRUB includes the new kernel plus an older fallback. Do not install or switch to HWE 6.14 manually during the migration. Mint documents HWE 6.14 issues with VirtualBox and legacy NVIDIA 470 drivers.
+
+Confirm `findmnt -T /` and `findmnt -T /boot/efi` both show `rw` in their options after boot. If either shows `ro`, stop before the 22.3 stage and diagnose it; do not try to remount the root filesystem read-write as a workaround.
 
 If the graphical session fails but the computer reaches GRUB, select **Advanced options for Linux Mint** and boot the earlier working kernel or its recovery entry. If the computer cannot boot successfully, start the verified Mint live USB and restore the pre-upgrade Timeshift snapshot; use Boot Repair only if the firmware/GRUB boot sequence itself is damaged. Do not re-enable third-party sources to work around a graphics or boot issue.
 
