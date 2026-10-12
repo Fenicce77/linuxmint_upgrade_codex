@@ -3,6 +3,9 @@
 **Target:** Linux Mint 22.3 Cinnamon “Zena”
 **Starting release:** Linux Mint 21.3 Cinnamon “Virginia”
 **Companion:** [upgrade assessment](linuxmint-upgrade-assessment-2026-09-22.md)
+**Guidance reviewed:** 2026-10-12
+
+As of this review, Linux Mint lists 22.3 as its latest recommended release. Mint 21.3 remains supported until April 2027, and 22.3 is supported until April 2029. Check the [current supported-release list](https://linuxmint.com/download_all.php) and the upgrade instructions again immediately before starting, in case Mint publishes a newer release or changes the supported route.
 
 > [!WARNING]
 > Upgrade locally while on AC power and reliable networking. Do not use an SSH-only/fragile session. Do not manually change `jammy` to `noble`, interrupt `mintupgrade`, or run `autoremove` until final verification passes.
@@ -15,7 +18,7 @@ Stop before the next phase if you lack an independent backup, a verified Timeshi
 
 1. Reserve several uninterrupted hours and connect AC power.
 2. Download the Mint 22.3 Cinnamon ISO and create a bootable USB.
-3. Verify the ISO checksum against the value published by Linux Mint before writing it to USB. This avoids relying on a previous live image whose `casper-md5check` service failed; that historical failure was from a live session, not the installed OS.
+3. Verify the ISO checksum against the value published by Linux Mint before writing it to USB. The earlier `casper-md5check` failure came from a live session, not the installed OS, but a verified fresh image is important recovery media.
 4. Boot the USB once; confirm it sees the NVMe disk, display, keyboard, and Wi-Fi.
 5. Confirm that the live session can access the Timeshift snapshot destination. This is the recovery environment if the installed system no longer boots.
 6. Disconnect nonessential USB devices.
@@ -78,42 +81,64 @@ apt-mark showhold
 systemctl --failed
 ```
 
-The local boot-chain assessment found a healthy UEFI/GRUB configuration, ample EFI space, and multiple existing fallback kernels. It also found historical NVIDIA Xid 31 and PRIME/DRM errors. Before continuing, confirm that the currently updated NVIDIA driver and its DKMS module are healthy:
+The local boot-chain assessment found a healthy UEFI/GRUB configuration, ample EFI space, and multiple existing fallback kernels. It also found historical NVIDIA Xid 31 and PRIME/DRM errors. Before continuing, confirm the boot chain and current NVIDIA module:
 
 ```bash
+# These should confirm UEFI mode, the EFI mount, and available EFI space.
+test -d /sys/firmware/efi && echo "UEFI booted" || echo "STOP: not booted in UEFI mode"
+findmnt /boot/efi
+df -h /boot/efi
+
+# Confirm GRUB has the installed kernel and at least one older fallback entry.
+grep -E "menuentry 'Linux Mint" /boot/grub/grub.cfg
+
+# Confirm NVIDIA userspace and the module for the running kernel.
 nvidia-smi
 dkms status
 ```
 
-Do not use force options, pin changes, or package removals to work around an update problem. If NVIDIA reports an error or DKMS has no installed module for the running kernel, stop and resolve that on Mint 21.3 before attempting the release upgrade.
+The EFI partition was 2% used and firmware pointed to Mint’s shim at inspection time. Do not change EFI/GRUB settings preemptively. Do not use force options, pin changes, or package removals to work around an update problem. If `/boot/efi` is not mounted, GRUB has no current and fallback entries, `nvidia-smi` fails, or DKMS has no NVIDIA module for the running kernel, stop and resolve that on Mint 21.3 before attempting the release upgrade.
 
 ## Phase 4 — temporarily disable external APT sources
 
-These files are currently compatible with Ubuntu 22.04/Jammy or external channels, not necessarily the Ubuntu 24.04/Noble base used by Mint 22. Move them aside reversibly:
+The assessment found 15 external source files, mostly configured for Ubuntu 22.04/Jammy or vendor channels. Mint 22 uses the Ubuntu 24.04/Noble base. Check the current filenames first, then move only external sources aside reversibly. The loop below safely reports files that are already absent:
 
 ```bash
-sudo mkdir -p /etc/apt/sources.list.d/disabled-for-mint-upgrade
-sudo mv \
-  /etc/apt/sources.list.d/mongodb-org-8.0.list \
-  /etc/apt/sources.list.d/percona-tools-release.list \
-  /etc/apt/sources.list.d/percona-telemetry-release.list \
-  /etc/apt/sources.list.d/percona-psmdb-80-release.list \
-  /etc/apt/sources.list.d/percona-pbm-release.list \
-  /etc/apt/sources.list.d/brave-browser-release.sources \
-  /etc/apt/sources.list.d/google-chrome.sources \
-  /etc/apt/sources.list.d/vscode.sources \
-  /etc/apt/sources.list.d/docker.list \
-  /etc/apt/sources.list.d/nodesource.list \
-  /etc/apt/sources.list.d/bazel.list \
-  /etc/apt/sources.list.d/repo.fortinet.com.list \
-  /etc/apt/sources.list.d/sublime-text.list \
-  /etc/apt/sources.list.d/antigravity.list \
-  /etc/apt/sources.list.d/mwt-desktop.list \
-  /etc/apt/sources.list.d/disabled-for-mint-upgrade/
+ls -1 /etc/apt/sources.list.d/
+
+disabled_dir=/etc/apt/sources.list.d/disabled-for-mint-upgrade
+sudo mkdir -p "$disabled_dir"
+for name in \
+  mongodb-org-8.0.list \
+  percona-tools-release.list \
+  percona-telemetry-release.list \
+  percona-psmdb-80-release.list \
+  percona-pbm-release.list \
+  brave-browser-release.sources \
+  google-chrome.sources \
+  vscode.sources \
+  docker.list \
+  nodesource.list \
+  bazel.list \
+  repo.fortinet.com.list \
+  sublime-text.list \
+  antigravity.list \
+  mwt-desktop.list
+do
+  source_file="/etc/apt/sources.list.d/$name"
+  if [ -f "$source_file" ]; then
+    sudo mv -- "$source_file" "$disabled_dir/"
+  else
+    printf 'Not present (review manually): %s\n' "$source_file"
+  fi
+done
+
+# Inspect remaining active sources before refreshing APT.
+ls -1 /etc/apt/sources.list.d/
 sudo apt update
 ```
 
-Do **not** move `/etc/apt/sources.list.d/official-package-repositories.list`. If any listed file is absent, stop, inspect `ls /etc/apt/sources.list.d/`, and move the remainder individually—never use a wildcard.
+Do **not** move `/etc/apt/sources.list.d/official-package-repositories.list`. Review any unexpected file in the active directory before continuing; do not use a wildcard to disable repositories.
 
 ## Phase 5 — upgrade Mint 21.3 to Mint 22
 
@@ -143,9 +168,11 @@ nvidia-smi
 dkms status
 inxi -A
 nmcli general status
+findmnt /boot/efi
+grep -E "menuentry 'Linux Mint" /boot/grub/grub.cfg
 ```
 
-Test login, Cinnamon, Wi-Fi, Bluetooth, sound, suspend/resume, external displays, NVIDIA graphics, VPN, representative Docker workloads, and a QEMU/libvirt guest. Confirm that `dkms status` lists the NVIDIA module as installed for the newly booted kernel. Initially keep the stable 6.8 kernel rather than manually selecting HWE 6.14.
+Test login, Cinnamon, Wi-Fi, Bluetooth, sound, suspend/resume, external displays, NVIDIA graphics, VPN, representative Docker workloads, and a QEMU/libvirt guest. Confirm that `dkms status` lists the NVIDIA module as installed for the newly booted kernel and that GRUB includes the new kernel plus an older fallback. Do not install or switch to HWE 6.14 manually during the migration. Mint documents HWE 6.14 issues with VirtualBox and legacy NVIDIA 470 drivers.
 
 If the graphical session fails but the computer reaches GRUB, select **Advanced options for Linux Mint** and boot the earlier working kernel or its recovery entry. If the computer cannot boot successfully, start the verified Mint live USB and restore the pre-upgrade Timeshift snapshot; use Boot Repair only if the firmware/GRUB boot sequence itself is damaged. Do not re-enable third-party sources to work around a graphics or boot issue.
 
@@ -216,6 +243,7 @@ Keep the Timeshift snapshot and `~/mint-upgrade-backup` until the machine has re
 
 ## Official sources
 
+- [Currently supported Mint releases and recommendation](https://linuxmint.com/download_all.php)
 - [Mint 21.3 → 22 upgrade guide](https://linuxmint-user-guide.readthedocs.io/en/latest/upgrade-to-mint-22.html)
 - [Mint 22 → 22.3 upgrade guide](https://blog.linuxmint.com/?p=4980)
 - [Mint 22.3 release notes](https://linuxmint.com/rel_zena.php)
